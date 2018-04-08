@@ -118,23 +118,37 @@ int CAN_set_mode(int mode) {
 
 void CAN_init(void) {
 	
-	//TODO Actually write these values to the CAN_MCR Register correctly
-	CAN_MCR |= 1<<15; //Master Software Reset
-    
-	CAN_MCR |= 1; //Set CAN to Initialization Mode
+	CAN_TypeDef *can1 = CAN1_BASE; //CAN1 Base
 
-	while( !CAN_MSR->INAK  ) {} //Waits until Hardware signals we are in
+	//TODO Actually write these values to the CAN_MCR Register correctly
+	can1->MCR |= 1<<15; //Master Software Reset
+    
+	can1->MCR |= CAN_MCR_INRQ_Msk; //Set CAN to Initialization Mode
+
+	while( can1->MSR & CAN_MSR_INAK_Msk == 0  ) {} //Waits until Hardware signals we are in
 								//Initialization mode
 
-	CAN_MCR |= 1<< 6; //Automatic Bus-Off Management
-	CAN_MCR |= 1<<5; //Automatic Wakeup Mode
-	CAN_MCR |= 1<<4; //Non-Automatic Retransmission ?????
-	CAN_MCR |= 1<<2; //Transmit Priority
+	can1->MCR |= 1<< 6; //Automatic Bus-Off Management
+	can1->MCR |= 1<<5; //Automatic Wakeup Mode
+	can1->MCR |= 1<<4; //Non-Automatic Retransmission ?????
+	can1->MCR |= 1<<2; //Transmit Priority
 
-	CAN_MCR &= (~0x1); //Sets CAN to Normal Mode
+	can1->MCR &= (~0x1); //Sets CAN to Normal Mode
 
-	//TODO finish rest of configuration
+	while( can1->MSR & CAN_MSR_INAK_Msk != 0  ) {} //Waits until hardware leaves 
+						//Initialization mode
+
+	//TODO finish rest of configuration:
+	//
+	//From pg. 1355 of ref. manual
+	//
+	//"To initialize the CAN Controller, software has to set up the Bit Timing (CAN_BTR) and CAN
+	//options (CAN_MCR) registers.
+	//To initialize the registers associated with the CAN filter banks (mode, scale, FIFO
+	//assignment, activation and filter values), software has to set the FINIT bit (CAN_FMR). Filter
+	//initialization also can be done outside the initialization mode. "
 	/*
+	
 	CAN_set_mode(CONFIG_MODE);
     CAN_set_timings();
     CAN_fifo_init();
@@ -201,18 +215,49 @@ In case all transmit mailboxes are pending, the code value is equal to the numbe
 transmit mailbox with the lowest priority
 */
 
-//TODO Add checking of status values after sending (page 1376 of ref. manual)
-
 // Returns true/false based on whether or not it's possible to send the message currently
 bool CAN_send(void) {
-    if (  ) {
-        fault = CAN_OUT_FULL_ERROR;
-        next_state = fault;
-        return false;   // wait until FIFO is not full
+    
+	int mailbox_num = 0;
+	int i;
+	Can_TypeDef *can1 = CAN1_BASE;
+	
+	//Select an empty mailbox, and update mailbox_num accordingly (0..2)
+	for(i = 0; i< 3; i++){	
+		if( (can1->TSR & ( ~(CAN_TSR_TME0_Msk << i) ) ) != 0){
+			mailbox_num = i;
+			break;
+		}
+		if( i == 2){ //All mailboxes are full
+			//TODO figure out what to do when mailboxes are full
+		}
+	}
+
+	// TODO Set up the identifier, the data length code (DLC) and the data before requesting the transmission
+	// by setting the corresponding TXRQ bit in the CAN_TIxR register
+
+	//Wait until mailbox status is empty, before checking status of message
+	while( (can1->TSR & ( ~(CAN_TSR_TME0_Msk << mailbox_num) ) ) == 0){}
+
+	//Check successful sending bits RQCP and TXOK
+	if ( (can1->TSR & (CAN_TSR_RQCP0_Msk << (mailbox_num * 8)) == 0) ||  
+			(can1->TSR & (CAN_TSR_TXOK0_Msk << ( mailbox_num * 8)) == 0)) { //if fault occured
+        
+		
+		//Arbitration Lost fault
+		if( can1->TSR & (CAN_TSR_ALST0_Msk << (mailbox_num * 8)) != 0  ){
+			//TODO Handle Fault
+		}
+		//Transmission Error Detection Fault
+		else if(_can1->TSR & (CAN_TSR_TERR0_Msk << (mailbox_num * 8)) != 0 ){
+			//TODO Handle Fault
+		}
+		return false;
+
     }
     if (debuggingOn) CAN_message_dump(sending, true);
-    CAN_SFR(FIFOCON2SET, CAN_MAIN) = 0x2000;     // increment pointer for fifo
-    CAN_SFR(FIFOCON2bits, CAN_MAIN).TXREQ = 1;   // tell CAN to send message
+    //CAN_SFR(FIFOCON2SET, CAN_MAIN) = 0x2000;     // increment pointer for fifo
+    //CAN_SFR(FIFOCON2bits, CAN_MAIN).TXREQ = 1;   // tell CAN to send message
     return true;
 }
 
@@ -224,27 +269,96 @@ bool CAN_send(void) {
 /*                        Receiving Messages                                  */
 /******************************************************************************/
 
-bool CAN_receive_broadcast(void) {
-    if (!GLOBAL_RECEIVE_FLAG) return false;
-    receivePointer = BROADCAST_REC_ADDR;
-    receiving.raw[0] = receivePointer[0];
-    receiving.raw[1] = receivePointer[1];
-    receiving.raw[2] = receivePointer[2];
-    receiving.raw[3] = receivePointer[3];
+//Function for receiving all messages found in Receive FIFOs. Messages are returned in 
+//an array up to size 6.
+bool CAN_receive_all(void) {	
+
+	int fifo0, fifo1, i;
+
+	CAN_TypeDef * can1 = CAN1_BASE;
+
+	fifo0 = can1->RF0R & CAN_RF0R_FMP0_Msk;
+	fifo1 = can1->RF1R & CAN_RF1R_FMP0_Msk;
+	
+	if( (fifo0 + fifo1) == 0){
+		return true; //No messages to receive, do nothing
+	}
+	//otherwise allocate a buffer to hold all messages
+	//NOTE: will be calling function's responsibility to free memory
+	rec_buf = rec_buf = malloc( (fifo0+fifo0) * sizeof(CAN_MESSAGE) ); 
+	if(rec_buf == NULL){ //Error in allocation
+		return false;
+	}
+
+	if( fifo0 > 0){ //There is at least 1 message in FIFO0
+			
+			for( i = 0; i < fifo0; i++){
+				rec_buf[i].id = can1->sFIFOMailBox[0].RIR;	
+				rec_buf[i].dlc_time_stamp = can1->sFIFOMailBox[0].RTDR;
+				rec_buf[i].data_low = can1->sFIFOMailBox[0].RDLR;
+				rec_buf[i].data_high = can1->sFIFOMailBox[0].RDHR;
+			}
+	}
+	if( fifo1 > 0){ //There is at least 1 message in FIFO1
+		
+			for( i = fifo0; i < (fifo1+fifo0); i++){
+				rec_buf[i].id = can1->sFIFOMailBox[1].RIR;	
+				rec_buf[i].dlc_time_stamp = can1->sFIFOMailBox[1].RTDR;
+				rec_buf[i].data_low = can1->sFIFOMailBox[1].RDLR;
+				rec_buf[i].data_high = can1->sFIFOMailBox[1].RDHR;
+			}
+	}
+	
+	//TODO Check Error Cases
+
     if (debuggingOn) CAN_message_dump(&receiving, false);
-    CAN_SFR(FIFOCON0SET, CAN_MAIN) = 0x2000;
+    
     return true;
 }
 
-bool CAN_receive_specific(void) {
-    if (!ADDRESSED_RECEIVE_FLAG) return false;
-    receivePointer = ADDRESSED_REC_ADDR;
-    receiving.raw[0] = receivePointer[0];
-    receiving.raw[1] = receivePointer[1];
-    receiving.raw[2] = receivePointer[2];
-    receiving.raw[3] = receivePointer[3];
+
+//Function for receiving one entire FIFO. Starts search in FIFO0 and then
+//goes to FIFO1, so FIFO1 could potentially be starved. The entire FIFO needs to 
+//read out because FIFO is set to empty once a message is acknowledged, no matter
+//how many messages are stored.
+bool CAN_receive_FIFO( uint32_t *rec_buf) {
+    
+	int fifo0, fifo1, i;
+
+	CAN_TypeDef * can1 = CAN1_BASE;
+
+	fifo0 = can1->RF0R & CAN_RF0R_FMP0_Msk;
+	fifo1 = can1->RF1R & CAN_RF1R_FMP0_Msk;
+
+	if( fifo0 > 0){ //There is at least 1 message in FIFO0
+			//NOTE: will be calling function's responsibility to free memory
+			rec_buf = malloc(fifo0 * sizeof(CAN_MESSAGE) );
+			for( i = 0; i < fifo0; i++){
+				rec_buf[i].id = can1->sFIFOMailBox[0].RIR;	
+				rec_buf[i].dlc_time_stamp = can1->sFIFOMailBox[0].RTDR;
+				rec_buf[i].data_low = can1->sFIFOMailBox[0].RDLR;
+				rec_buf[i].data_high = can1->sFIFOMailBox[0].RDHR;
+			}
+	}
+	else if( fifo1 > 0){ //There is at least 1 message in FIFO1
+		
+			//NOTE: will be calling function's responsibility to free memory
+			rec_buf = malloc(fifo1 * sizeof(CAN_MESSAGE) );
+			for( i = 0; i < fifo1; i++){
+				rec_buf[i].id = can1->sFIFOMailBox[1].RIR;	
+				rec_buf[i].dlc_time_stamp = can1->sFIFOMailBox[1].RTDR;
+				rec_buf[i].data_low = can1->sFIFOMailBox[1].RDLR;
+				rec_buf[i].data_high = can1->sFIFOMailBox[1].RDHR;
+			}
+	}
+	else{ //No messages to receive, do nothing
+		return true;
+	}
+	
+	//TODO Check Error Cases
+
     if (debuggingOn) CAN_message_dump(&receiving, false);
-    CAN_SFR(FIFOCON1SET, CAN_MAIN) = 0x2000;
+    
     return true;
 }
 /******************************************************************************/

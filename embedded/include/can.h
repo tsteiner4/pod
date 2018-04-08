@@ -77,11 +77,13 @@
 /******************************************************************************/
 /******************************************************************************/
 
+//CAN message struct as defined in Receive FIFO description in proc/stm32______.h
 struct CAN_MESSAGE{
 
-	int id;
-	char* data;
-	int length; // Multiple of 8
+	uint32_t id;
+	uint32_t dlc_time_stamp;
+	uint32_t data_high;
+	uint32_t data_low;
 	
 } CAN_MESSAGE;
 
