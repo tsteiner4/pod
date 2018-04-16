@@ -4,10 +4,6 @@
 /*                                Local Variables                             */
 /******************************************************************************/
 static volatile unsigned int numOverflows = 0;
-static volatile unsigned int timeOfLastMessage = 0;
-static unsigned int *receivePointer;
-
-static unsigned int lastSentTimeout = 0, currTime = 0;
 
 /******************************************************************************/
 /******************************************************************************/
@@ -17,10 +13,102 @@ static unsigned int lastSentTimeout = 0, currTime = 0;
 /*                              Initialization                                */
 /******************************************************************************/
 
+//Initializing filters needed for proper CAN function
+void CAN_filterInit(void){
 
-void CAN_fifo_init(void) {
-//    memset((void *) fifos, 0, sizeof(CAN_MESSAGE) * FIFO_SIZE);
-     
+	/*
+To initialize the registers associated with the CAN filter banks (mode, scale, FIFO
+assignment, activation and filter values), software has to set the FINIT bit (CAN_FMR). Filter
+initialization also can be done outside the initialization mode. 
+	*/
+
+
+
+}
+
+//Configuring the Master Control Register 
+void CAN_MCRInit(void){
+
+	can1->MCR |= 1<< 6; //Automatic Bus-Off Management
+	can1->MCR |= 1<<5; //Automatic Wakeup Mode
+
+	//TODO: is this something we want?
+	can1->MCR |= 1<<4; //Non-Automatic Retransmission 
+	can1->MCR |= 1<<2; //Transmit Priority
+
+}
+
+//Set up which interrrupts we care to use
+void CAN_interruptInit(void){
+	
+	CAN_TypeDef *mycan = CAN1_BASE;
+
+	//TODO: check whether we need certain interrupts or not, marked by "Not sure"
+
+	//Clear all bits in Interrupt Enable Register
+	mycan->IER = 0;
+
+	//Bit Number: Description
+	//17: Sleep Interrupt Enable
+	mycan->IER |= CAN_IER_SLKIE_Msk; //Not sure
+	
+	//16: Wakeup Interrupt Enable
+	mycan->IER |= CAN_IER_WKUIE_Msk; //Not sure
+	
+	//15: Error Interrupt Enable
+	mycan->IER |= CAN_IER_ERRIE_Msk; 
+
+	//11: Last Error Code Interrupt Enable
+	mycan->IER |= CAN_IER_LECIE_Msk; //Not sure 
+
+	//10: Bus-Off Interrupt Enable
+	mycan->IER |= CAN_IER_BOFIE_Msk; //Not sure
+
+	//9: Error Passive Interrupt Enable
+	mycan->IER |= CAN_IER_EPVIE_Msk;
+
+	//8: Error Warning Interrupt Enable
+	mycan->IER |= CAN_IER_EWGIE_Msk; 
+	
+
+	//RECEIVE FIFO #1 INTERRUPTS
+	//6: Receive FIFO #1 Overrun Interrupt Enable
+	mycan->IER |= CAN_IER_FOVIE1_Msk; 
+
+	//5: Receive FIFO #1 FIFO Full Interrupt Enable
+	mycan->IER |= CAN_IER_FFIE1_Msk; 
+
+	//4: Receive FIFO #1 Message Pending Interrupt Enable
+	mycan->IER |= CAN_IER_FMPIE1_Msk; 	
+
+
+	//RECEIVE FIFO #0 INTERRUPTS
+	//3: Receive FIFO #0 FIFO Overrun Interrupt Enable
+	mycan->IER |= CAN_IER_FOVIE0_Msk; 
+
+	//2: Receive FIFO #0 FIFO Full Interrupt Enable
+	mycan->IER |= CAN_IER_FFIE0_Msk; 
+
+	//1: Receive FIFO #0 FIFO Message Pending Interrupt Enable
+	mycan->IER |= CAN_IER_FMPIE0_Msk; 
+
+	//0: Transmit Mailbox Empty Interrupt Enable
+	mycan->IER |= CAN_IER_TMEIE_Msk; //Not sure, might want to fill this just so 
+   									 //we are sending something	
+
+}
+
+//Initializing send and receive mailboxes/FIFOs
+void CAN_mailboxInit(void) {
+
+	CAN_TypeDef *mycan = CAN1_BASE;
+
+	//pointer (array) of type TxMailBox, of size 3. Represents tx mailboxes
+	CAN_TxMailBox_TypeDef *tx_mailbox = mycan->sTxMailBox; 
+
+	//array of type FIFOMailBox, of size 2. Represents 2 receive fifos
+	CAN_FIFOMailBox_TypeDef *rx_fifo = mycan->sFIFOMailBox;
+
 
 ////////////////////Transfer Mailboxes (3) CAN_TIxR {x = 0,1,2}//////////////////////////////////////////////////
 //BITS 31-21 are Standard ID bits
@@ -43,77 +131,29 @@ void CAN_fifo_init(void) {
 	//High Byte: CAN_RDHxR {x = 0,1}
 	//Low Byte: CAN_RDLxR {x = 0,1}
 
+	//Set all FIFOs/Mailboxes to use standard identifier, not extended
+	tx_mailbox[0].TIR &= ~CAN_TI0R_IDE_Msk;
+	tx_mailbox[1].TIR &= ~CAN_TI1R_IDE_Msk;
+	tx_mailbox[2].TIR &= ~CAN_TI2R_IDE_Msk;
+	
+	rx_fifo[0].RIR &= ~CAN_RI0R_IDE_Msk;
+	rx_fifo[1].RIR &= ~CAN_RI1R_IDE_Msk;
 
+	//Set to data frames //TODO: Check if we want remote frames or data frames
+	tx_mailbox[0].TIR &= ~CAN_TI0R_RTR_Msk;	
+	tx_mailbox[0].TIR &= ~CAN_TI1R_RTR_Msk;	
+	tx_mailbox[0].TIR &= ~CAN_TI2R_RTR_Msk;
 
+	rx_fifo[0] &= ~CAN_RI0R_RTR_Msk;
+	rx_fifo[1] &= ~CAN_RI1R_RTR_Msk;
 
-
-
-
- 
-    // do not use extended identifier
-    
-    // filter 0 used for FIFO 0
-    // filter 0 uses mask 0
-    
-    // filter 1 used for FIFO 1
-    // filter 1 uses mask 1
-   
-    // enable filter 0
-    // enable filter 1 
-   
+	
 }
 
-void CAN_set_up_interrupts(void) {
-    CAN_SFR(INTbits, CAN_MAIN).RBIE = 1;
-    
-    // Disable Interrupts for now
-    CAN_SFR(FIFOINT0bits, CAN_MAIN).RXFULLIE = 1;
-    CAN_SFR(FIFOINT1bits, CAN_MAIN).RXFULLIE = 1;
-    //GLOBAL_RECEIVE_ENABLE = 1;                  // interrupt when not empty
-    //ADDRESSED_RECEIVE_ENABLE = 1;               // interrupt when not empty        
-    
-    // enable interrupts globally
-#if CAN_MAIN == 1
-    IEC1bits.CAN1IE = 1;
-    IPC11bits.CAN1IP = 3;
-    IPC11bits.CAN1IS = 0;
-#elif CAN_MAIN == 2
-    IEC1bits.CAN2IE = 1;
-    IPC11bits.CAN2IP = 3;
-    IPC11bits.CAN2IS = 0;
-#endif
-    MAIN_CAN_FLAG = 0;
-    ALT_CAN_FLAG = 0;
-}
+//Set up CAN_BTR register, called from CAN_init()
+void CAN_setBitTiming(void) {
 
-// See http://ww1.microchip.com/downloads/en/DeviceDoc/61154C.pdf Bit Timing section
-void CAN_set_timings(void) {
-    CAN_SFR(CFGbits, CAN_MAIN).SAM = 1;                  // Sample 3 times between SEG1PH and SEG2PH
-    CAN_SFR(CFGbits, CAN_MAIN).SEG2PHTS = 1;             // SEG2PH set manually
 
-// Want 16 Tq every 1/250kHz, so FTq = 4MHz
-#if defined(BAUD_250K)
-    CAN_SFR(CFGbits, CAN_MAIN).SEG1PH = 4;              // + 5 Tq
-    CAN_SFR(CFGbits, CAN_MAIN).SEG2PH = 4;              // + 5 Tq
-    CAN_SFR(CFGbits, CAN_MAIN).PRSEG = 4;               // + 5 Tq (+ 1 Tq from sync segment) = 16 Tq
-    CAN_SFR(CFGbits, CAN_MAIN).SJW = 1;                 // +/- 2 Tq
-    CAN_SFR(CFGbits, CAN_MAIN).BRP = 7;                 // = (64 000 000 / (2 * FTq) - 1 = 7
-
-// Want 8 Tq every 1/1MHz, so FTq = 8 MHz
-#elif defined(BAUD_1M)
-    CAN_SFR(CFGbits, CAN_MAIN).SEG1PH = 2;               // +   3 Tq
-    CAN_SFR(CFGbits, CAN_MAIN).SEG2PH = 2;               // +   3 Tq
-    CAN_SFR(CFGbits, CAN_MAIN).PRSEG = 0;                // +   1 Tq (+ 1 Tq from sync segment) = 8 Tq
-    CAN_SFR(CFGbits, CAN_MAIN).SJW = 1;                  // +/- 2 Tq
-    CAN_SFR(CFGbits, CAN_MAIN).BRP = 3;                  // = (64 000 000 / (2 * FTq) - 1 = 3
-#endif
-}
-
-int CAN_set_mode(int mode) {
-    if (mode < 0 || mode > 7) return -1;
-    CAN_SFR(CONbits, CAN_MAIN).REQOP = mode;
-    while (CAN_SFR(CONbits, CAN_MAIN).OPMOD != mode);
-    return 0;
 }
 
 void CAN_init(void) {
@@ -128,13 +168,13 @@ void CAN_init(void) {
 	while( can1->MSR & CAN_MSR_INAK_Msk == 0  ) {} //Waits until Hardware signals we are in
 								//Initialization mode
 
-	can1->MCR |= 1<< 6; //Automatic Bus-Off Management
-	can1->MCR |= 1<<5; //Automatic Wakeup Mode
-	can1->MCR |= 1<<4; //Non-Automatic Retransmission ?????
-	can1->MCR |= 1<<2; //Transmit Priority
-
-	can1->MCR &= (~0x1); //Sets CAN to Normal Mode
-
+	CAN_filterInit();	
+    CAN_setBitTiming();
+    CAN_mailboxInit;
+    CAN_interruptInit();
+	
+	can1->MCR &= (~0x1); //Sets CAFIFOMailBox to Normal Mode
+	
 	while( can1->MSR & CAN_MSR_INAK_Msk != 0  ) {} //Waits until hardware leaves 
 						//Initialization mode
 
@@ -147,14 +187,7 @@ void CAN_init(void) {
 	//To initialize the registers associated with the CAN filter banks (mode, scale, FIFO
 	//assignment, activation and filter values), software has to set the FINIT bit (CAN_FMR). Filter
 	//initialization also can be done outside the initialization mode. "
-	/*
-	
-	CAN_set_mode(CONFIG_MODE);
-    CAN_set_timings();
-    CAN_fifo_init();
-    CAN_set_up_interrupts();
-    CAN_set_mode(NORMAL_MODE);
-	*/
+
 }
 /******************************************************************************/
 /******************************************************************************/
@@ -163,41 +196,22 @@ void CAN_init(void) {
 /******************************************************************************/
 /*                                Utility                                     */
 /******************************************************************************/
-inline void setupBroadcast(void) {
-    sending = BROADCAST_SEND_ADDR;
-    sending->SID = ALL;
-    sending->from = ourRole;
-}
+//TODO: figure out how to check error
+int CAN_check_error(void){  
 
-inline void setupMessage(uint16_t SID) {
-    sending = ADDRESSED_SEND_ADDR;
-    sending->SID = SID;
-    sending->from = ourRole;
-}
-
-int CAN_check_error(void) { return CAN_SFR(TREC, CAN_MAIN); }
-
-uint16_t ROLEtoSID(ROLE r) {
-    switch (r) {
-        case VNM: return VNM_SID;
-        case WCM: return WCM_SID;
-        case BCM: return BCM_SID;
-        case VSM: return VSM_SID;
-        case MCM: return MCM_SID;
-        case BMS: return BMS_SID;
-        default: return 0;
-    }
 }
 
 void check_bus_integrity(void) {
-    if (CAN_check_error()) {
-        fault = CAN_BUS_ERROR;
-        next_state = FAULT_STATE;
-    }
-    else if (IS_CAN_FAULT) {
-        prev_fault = fault;
-        fault = HEALTHY;
-    }
+    
+}
+
+//Functions for disabling all CAN based interrupts, if that's ever needed
+void disable_CAN_interrupts(void){
+	
+	CAN_TypeDef *mycan = CAN1_BASE;
+
+	//Clear all bits in Interrupt Enable Register
+	mycan->IER = 0;
 }
 /******************************************************************************/
 /******************************************************************************/
@@ -216,11 +230,14 @@ transmit mailbox with the lowest priority
 */
 
 // Returns true/false based on whether or not it's possible to send the message currently
-bool CAN_send(void) {
+bool CAN_send( int numBytes, uint32_t *data_buf) {
     
 	int mailbox_num = 0;
 	int i;
 	Can_TypeDef *can1 = CAN1_BASE;
+	
+	//pointer (array) of type TxMailBox, of size 3. Represents tx mailboxes
+	CAN_TxMailBox_TypeDef *tx_mailbox = can1->sTxMailBox; 
 	
 	//Select an empty mailbox, and update mailbox_num accordingly (0..2)
 	for(i = 0; i< 3; i++){	
@@ -228,13 +245,16 @@ bool CAN_send(void) {
 			mailbox_num = i;
 			break;
 		}
-		if( i == 2){ //All mailboxes are full
+		if( i == 2 ){ //All mailboxes are full
 			//TODO figure out what to do when mailboxes are full
 		}
 	}
 
-	// TODO Set up the identifier, the data length code (DLC) and the data before requesting the transmission
-	// by setting the corresponding TXRQ bit in the CAN_TIxR register
+	// TODO Set up the data length code (DLC) and the data
+	
+
+	//Request Transmission of message in corresponding mailbox
+	tx_mailbox[mailbox_num].TIR = CAN_TI0R_TXRQ_Msk;
 
 	//Wait until mailbox status is empty, before checking status of message
 	while( (can1->TSR & ( ~(CAN_TSR_TME0_Msk << mailbox_num) ) ) == 0){}
@@ -256,8 +276,6 @@ bool CAN_send(void) {
 
     }
     if (debuggingOn) CAN_message_dump(sending, true);
-    //CAN_SFR(FIFOCON2SET, CAN_MAIN) = 0x2000;     // increment pointer for fifo
-    //CAN_SFR(FIFOCON2bits, CAN_MAIN).TXREQ = 1;   // tell CAN to send message
     return true;
 }
 
@@ -271,7 +289,7 @@ bool CAN_send(void) {
 
 //Function for receiving all messages found in Receive FIFOs. Messages are returned in 
 //an array up to size 6.
-bool CAN_receive_all(void) {	
+bool CAN_receive_all( uint32_t *rec_buf ) {	
 
 	int fifo0, fifo1, i;
 
@@ -317,20 +335,19 @@ bool CAN_receive_all(void) {
 }
 
 
-//Function for receiving one entire FIFO. Starts search in FIFO0 and then
-//goes to FIFO1, so FIFO1 could potentially be starved. The entire FIFO needs to 
-//read out because FIFO is set to empty once a message is acknowledged, no matter
-//how many messages are stored.
-bool CAN_receive_FIFO( uint32_t *rec_buf) {
-    
+//Function for receiving one entire FIFO, based on the value of fifo_select. (0 or 1) 
+// The entire FIFO needs to read out because FIFO is set to empty once a message
+// is acknowledged, no matter how many messages are stored.
+bool CAN_receive_FIFO( int fifo_select, uint32_t *rec_buf) {
+
 	int fifo0, fifo1, i;
 
 	CAN_TypeDef * can1 = CAN1_BASE;
 
-	fifo0 = can1->RF0R & CAN_RF0R_FMP0_Msk;
-	fifo1 = can1->RF1R & CAN_RF1R_FMP0_Msk;
+	fifo0 = (can1->RF0R & CAN_RF0R_FMP0_Msk) & (fifo_select == 0);
+	fifo1 = can1->RF1R & CAN_RF1R_FMP0_Msk & (fifo_select == 1);
 
-	if( fifo0 > 0){ //There is at least 1 message in FIFO0
+	if( fifo0 ){ //There is at least 1 message in FIFO0 and it got selected
 			//NOTE: will be calling function's responsibility to free memory
 			rec_buf = malloc(fifo0 * sizeof(CAN_MESSAGE) );
 			for( i = 0; i < fifo0; i++){
@@ -340,7 +357,7 @@ bool CAN_receive_FIFO( uint32_t *rec_buf) {
 				rec_buf[i].data_high = can1->sFIFOMailBox[0].RDHR;
 			}
 	}
-	else if( fifo1 > 0){ //There is at least 1 message in FIFO1
+	else if( fifo1 ){ //There is at least 1 message in FIFO1 and it got selected
 		
 			//NOTE: will be calling function's responsibility to free memory
 			rec_buf = malloc(fifo1 * sizeof(CAN_MESSAGE) );
@@ -368,43 +385,22 @@ bool CAN_receive_FIFO( uint32_t *rec_buf) {
 /******************************************************************************/
 /*                          Heartbeat Related                                 */
 /******************************************************************************/
-inline void handleCANbco(void) {
-    if (!CAN_broadcast()) fault = CAN_OUT_FULL_ERROR;
-}
-
-inline void handleCANmo(void) {
-    if (!CAN_send()) fault = CAN_OUT_FULL_ERROR;
-}
-
-inline void load_state(void) {
-    sending->byte0 = prev_fault;
-    sending->byte1 = fault;
-    sending->byte2 = prev_state;
-    sending->byte3 = state;
-    sending->byte4 = next_state;
-}
-
+//TODO: what does this do?
 void CAN_send_fault(void) {
-    currTime = TMR45;
-    if (CHECK_SEND_CAN_TO) {
-        lastSentTimeout = currTime;
-        setupBroadcast();
-        sending->SIZE = 6;
-        sending->message_num = FAULT;
-        load_state();
-        handleCANbco();
-    }
+    
 }
 
-void CAN_send_heartbeat(bool fake) {
-    sending = BROADCAST_SEND_ADDR;
-    sending->SID = ALL;
-    sending->from = fake ? WCM : ourRole;
-    sending->SIZE = 6;
-    sending->message_num = HEARTBEAT;
-    load_state();
-    if (fake) heartbeatsReceived = 2; // since we bypassed WCM
-    handleCANbco();
+//TODO: Send heartbeat message, figure out what needs to be sent
+void CAN_send_heartbeat(void) {
+   	
+	int numBytes;
+	uint32_t data_buf[ TODO ];
+
+	numBytes = //TODO;
+	data_buf = //TODO;
+
+	CAN_send( numBytes, &data_buf);
+
 }
 /******************************************************************************/
 /******************************************************************************/
@@ -413,21 +409,14 @@ void CAN_send_heartbeat(bool fake) {
 /******************************************************************************/
 /*                                    ISRs                                    */
 /******************************************************************************/
+
+//TODO: create ISR's for CAN interrupts
 void __ISR (MAIN_CAN_VECTOR, IPL1SOFT) MAIN_CAN_Interrupt(void) {
-    if (CAN_MAIN_VECTOR_BITS.ICODE == 0) {
-        checkBroadcasts();
-        fault = CAN_IN_FULL_ERROR;
-    }
-    else if (CAN_MAIN_VECTOR_BITS.ICODE == 1) {
-        checkMessages();
-        fault = CAN_IN_FULL_ERROR;
-    }
-    CAN_SFR(INTbits, CAN_MAIN).RBIF = 0;
-    MAIN_CAN_FLAG = 0;
+    
 }
 
 void __ISR (ALT_CAN_VECTOR, IPL1SOFT) ALT_CAN_Interrupt (void) {
-    ALT_CAN_FLAG = 0;
+    
 }
 /******************************************************************************/
 /******************************************************************************/
@@ -436,59 +425,18 @@ void __ISR (ALT_CAN_VECTOR, IPL1SOFT) ALT_CAN_Interrupt (void) {
 /******************************************************************************/
 /*        Compiled depending on availablity of Serial Debug                   */
 /******************************************************************************/
+
+//TODO: Redo debugging functions
 void CAN_print_errors(void) {
-    if (CAN_SFR(TREC, CAN_MAIN)) printf("CAN ERROR: ");
-    else printf("No errors ");
-    if (CAN_SFR(TRECbits, CAN_MAIN).TXBO) printf("TXBO ");
-    else if (CAN_SFR(TRECbits, CAN_MAIN).TXBP) printf("TXBP ");
-    else if (CAN_SFR(TRECbits, CAN_MAIN).TXWARN) printf("TXW ");
-    if (CAN_SFR(TRECbits, CAN_MAIN).RXBP) printf("RXBP ");
-    else if (CAN_SFR(TRECbits, CAN_MAIN).RXWARN) printf("RXW ");
-    printf("(TX:%3d RX:%3d)", CAN_SFR(TRECbits, CAN_MAIN).TERRCNT, CAN_SFR(TRECbits, CAN_MAIN).RERRCNT);
-    printf("\r\n");
+
 }
 
 void CAN_message_dump(CAN_MESSAGE *message, bool outgoing) {
-    int i;
-    if (outgoing && (message->SID & ALL))   printf("BO: ");
-    else if (outgoing)                      printf("MO: ");
-    else if (message->SID & ALL)            printf("BI: ");
-    else                                    printf("MI: ");                                    
-    printf("0x%3x from %3s ", message->SID, roleStr[message->from]);
-    printf(" %2d (%u bytes): %s ", message->message_num, message->SIZE - 1, messageStr[message->message_num]);
-    if ((message->message_num == FAULT || message->message_num == HEARTBEAT) && message->SIZE == 6) 
-        printf("[%.5s][%.5s] [%.5s][%.5s][%.5s]", faultStr[message->byte0], faultStr[message->byte1], 
-                stateStr[message->byte2], stateStr[message->byte3], stateStr[message->byte4]);
-    else if (message->message_num == PING_BACK || message->message_num == SOFTWARE_VER)
-        printf("\t[%s]", message->bytes);
-    else for (i = 0; i < message->SIZE - 1; i++) printf("[0x%2x] ", message->bytes[i]);
-    printf("\r\n");
+
 }
 
 bool CAN_ping(uint16_t SID, bool initiator) {
-    bool result = true;
-    if (SID == ROLEtoSID(ourRole)) {
-        if (debuggingOn) printf("can't ping yourself! (you are %s)\r\n", roleStr[ourRole]);
-        return;
-    }
-    (SID == ALL) ? setupBroadcast() : setupMessage(SID);
-    sending->SIZE = initiator ? 1 : 8;
-    sending->message_num = initiator ?  PING_TO : PING_BACK;
-    if (initiator) return (SID == ALL) ? CAN_broadcast() : CAN_send();
-    sending->byte0 = timestamp[11];
-    sending->byte1 = timestamp[12];
-    sending->byte2 = timestamp[14];
-    sending->byte3 = timestamp[15];
-    sending->byte4 = timestamp[17];
-    sending->byte5 = timestamp[18];
-    sending->byte6 = '\0';
-    result = (SID == ALL) ? CAN_broadcast() : CAN_send();
-    setupMessage(SID);
-    sending->SIZE = 8;
-    sending->message_num = SOFTWARE_VER;
-    strcpy(sending->bytes, &timestamp[26]);
-    sending->byte6 = '\0';
-    return result && ((SID == ALL) ? CAN_broadcast() : CAN_send());
+
 }
 /******************************************************************************/
 /******************************************************************************/
