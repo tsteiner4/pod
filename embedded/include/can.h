@@ -69,48 +69,23 @@
 
 
 /******************************************************************************/
-/*                      Module SIDs  (http://bit.ly/2iQw5cs)                  */
 /******************************************************************************/
 
-
-
-/******************************************************************************/
-/******************************************************************************/
-
-//CAN message struct as defined in Receive FIFO description in proc/stm32______.h
-struct CAN_MESSAGE{
-
-	uint32_t id;
-	uint32_t dlc_time_stamp;
-	uint32_t data_high;
-	uint32_t data_low;
-	
+//Definition of CAN_MESSAGE struct
+typedef struct  {
+  unsigned int   id;                 // 11 bit standard identifier
+  unsigned char  data[8];            // Data field
+  unsigned char  len;                // Length of data field in bytes
 } CAN_MESSAGE;
 
 /******************************************************************************/
 /*                                 Functions                                  */
 /******************************************************************************/
-void CAN_init(void);
-int CAN_check_error(void);
-void setupBroadcast(void);
-void setupMessage(uint16_t SID);
 
-inline void handleCANbco(void);
-inline void handleCANmo(void);
 
-bool CAN_send(void);
-bool CAN_broadcast(void);
 
-bool CAN_receive_broadcast(void);
-bool CAN_receive_specific(void);
 
-void CAN_send_fault(void);
-void CAN_send_heartbeat(bool fake);
 
-void CAN_message_dump(CAN_MESSAGE *message, bool outgoing);
-void CAN_print_errors(void);
-bool CAN_ping(uint16_t SID, bool initiator);
-void CAN_print_errors(void);
 /******************************************************************************/
 /******************************************************************************/
 #endif

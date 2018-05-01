@@ -1,9 +1,12 @@
 #include "../include/can.h"
 
 /******************************************************************************/
-/*                                Local Variables                             */
+/*                                Global Variables                             */
 /******************************************************************************/
-static volatile unsigned int numOverflows = 0;
+uint8_t CAN_TxReady = 0;
+uint8_t CAN_RxReceived = 0;
+
+CAN_MESSAGE CAN_RxMsg0, CAN_RxMsg1;
 
 /******************************************************************************/
 /******************************************************************************/
@@ -13,7 +16,7 @@ static volatile unsigned int numOverflows = 0;
 /*                              Initialization                                */
 /******************************************************************************/
 
-//Initializing filters needed for proper CAN function
+//Is this something we are going to use?
 void CAN_filterInit(void){
 
 	/*
@@ -21,8 +24,6 @@ To initialize the registers associated with the CAN filter banks (mode, scale, F
 assignment, activation and filter values), software has to set the FINIT bit (CAN_FMR). Filter
 initialization also can be done outside the initialization mode. 
 	*/
-
-
 
 }
 
@@ -38,7 +39,10 @@ void CAN_MCRInit(void){
 
 }
 
-//Set up which interrrupts we care to use
+
+/* //Basically made a list of CAN related interrupts we could possibly use
+
+
 void CAN_interruptInit(void){
 	
 	CAN_TypeDef *mycan = CAN1_BASE;
@@ -97,6 +101,8 @@ void CAN_interruptInit(void){
    									 //we are sending something	
 
 }
+
+*/
 
 //Initializing send and receive mailboxes/FIFOs
 void CAN_mailboxInit(void) {
@@ -168,17 +174,16 @@ void CAN_init(void) {
 	while( can1->MSR & CAN_MSR_INAK_Msk == 0  ) {} //Waits until Hardware signals we are in
 								//Initialization mode
 
-	CAN_filterInit();	
+	//CAN_filterInit();	
     CAN_setBitTiming();
     CAN_mailboxInit;
     CAN_interruptInit();
 	
 	can1->MCR &= (~0x1); //Sets CAFIFOMailBox to Normal Mode
 	
-	while( can1->MSR & CAN_MSR_INAK_Msk != 0  ) {} //Waits until hardware leaves 
-						//Initialization mode
-
-	//TODO finish rest of configuration:
+	CAN_start();
+ 
+	//Finish rest of configuration:
 	//
 	//From pg. 1355 of ref. manual
 	//
@@ -189,6 +194,19 @@ void CAN_init(void) {
 	//initialization also can be done outside the initialization mode. "
 
 }
+
+/*----------------------------------------------------------------------------
+  Leave initialisation mode, start normal mode
+ *----------------------------------------------------------------------------*/
+void CAN_start (void)  {
+
+  CAN_TypeDef *can1 = CAN1_BASE; //CAN1 Base
+  
+  can1->MCR &= ~CAN_MCR_INRQ;                      // normal operating mode, reset INRQ
+  while( can1->MSR & CAN_MSR_INAK_Msk != 0  ) {} //Waits until hardware leaves Initialization mode
+
+}
+
 /******************************************************************************/
 /******************************************************************************/
 
@@ -196,14 +214,6 @@ void CAN_init(void) {
 /******************************************************************************/
 /*                                Utility                                     */
 /******************************************************************************/
-//TODO: figure out how to check error
-int CAN_check_error(void){  
-
-}
-
-void check_bus_integrity(void) {
-    
-}
 
 //Functions for disabling all CAN based interrupts, if that's ever needed
 void disable_CAN_interrupts(void){
@@ -213,6 +223,7 @@ void disable_CAN_interrupts(void){
 	//Clear all bits in Interrupt Enable Register
 	mycan->IER = 0;
 }
+
 /******************************************************************************/
 /******************************************************************************/
 
@@ -229,54 +240,35 @@ In case all transmit mailboxes are pending, the code value is equal to the numbe
 transmit mailbox with the lowest priority
 */
 
-// Returns true/false based on whether or not it's possible to send the message currently
-bool CAN_send( int numBytes, uint32_t *data_buf) {
-    
-	int mailbox_num = 0;
-	int i;
-	Can_TypeDef *can1 = CAN1_BASE;
-	
-	//pointer (array) of type TxMailBox, of size 3. Represents tx mailboxes
-	CAN_TxMailBox_TypeDef *tx_mailbox = can1->sTxMailBox; 
-	
-	//Select an empty mailbox, and update mailbox_num accordingly (0..2)
-	for(i = 0; i< 3; i++){	
-		if( (can1->TSR & ( ~(CAN_TSR_TME0_Msk << i) ) ) != 0){
-			mailbox_num = i;
-			break;
-		}
-		if( i == 2 ){ //All mailboxes are full
-			//TODO figure out what to do when mailboxes are full
-		}
-	}
+/*----------------------------------------------------------------------------
+  wite a message to CAN peripheral and transmit it (only uses mailbox 0) 
+ *----------------------------------------------------------------------------*/
+void CAN_WriteMsg (CAN_msg *msg)  {
 
-	// TODO Set up the data length code (DLC) and the data
-	
+  //Check if TX is ready before sending a message
 
-	//Request Transmission of message in corresponding mailbox
-	tx_mailbox[mailbox_num].TIR = CAN_TI0R_TXRQ_Msk;
+  CAN_TypeDef *can1 = CAN1_BASE; //CAN1 Base
+                                                  // Setup identifier information
+  can1->sTxMailBox[0].TIR |= (unsigned int)(msg->id << 21) | CAN_ID_STD;
+                                                  // Setup type information
+  
+  can1->sTxMailBox[0].TIR |= CAN_RTR_DATA;
+  
+                                                  // Setup data bytes
+  can1->sTxMailBox[0].TDLR = (((unsigned int)msg->data[3] << 24) | 
+                             ((unsigned int)msg->data[2] << 16) |
+                             ((unsigned int)msg->data[1] <<  8) | 
+                             ((unsigned int)msg->data[0])        );
+  can1->sTxMailBox[0].TDHR = (((unsigned int)msg->data[7] << 24) | 
+                             ((unsigned int)msg->data[6] << 16) |
+                             ((unsigned int)msg->data[5] <<  8) |
+                             ((unsigned int)msg->data[4])        );
+                                                  // Setup length
+  can1->sTxMailBox[0].TDTR &= ~CAN_TDT0R_DLC;
+  can1->sTxMailBox[0].TDTR |=  (msg->len & CAN_TDT0R_DLC);
 
-	//Wait until mailbox status is empty, before checking status of message
-	while( (can1->TSR & ( ~(CAN_TSR_TME0_Msk << mailbox_num) ) ) == 0){}
-
-	//Check successful sending bits RQCP and TXOK
-	if ( (can1->TSR & (CAN_TSR_RQCP0_Msk << (mailbox_num * 8)) == 0) ||  
-			(can1->TSR & (CAN_TSR_TXOK0_Msk << ( mailbox_num * 8)) == 0)) { //if fault occured
-        
-		
-		//Arbitration Lost fault
-		if( can1->TSR & (CAN_TSR_ALST0_Msk << (mailbox_num * 8)) != 0  ){
-			//TODO Handle Fault
-		}
-		//Transmission Error Detection Fault
-		else if(_can1->TSR & (CAN_TSR_TERR0_Msk << (mailbox_num * 8)) != 0 ){
-			//TODO Handle Fault
-		}
-		return false;
-
-    }
-    if (debuggingOn) CAN_message_dump(sending, true);
-    return true;
+  can1->IER |= CAN_IER_TMEIE;                      // enable  TME interrupt 
+  can1->sTxMailBox[0].TIR |=  CAN_TI0R_TXRQ;       // transmit message
 }
 
 /******************************************************************************/
@@ -287,121 +279,37 @@ bool CAN_send( int numBytes, uint32_t *data_buf) {
 /*                        Receiving Messages                                  */
 /******************************************************************************/
 
-//Function for receiving all messages found in Receive FIFOs. Messages are returned in 
-//an array up to size 6.
-bool CAN_receive_all( uint32_t *rec_buf ) {	
+/*----------------------------------------------------------------------------
+  read a message from CAN peripheral and release it (uses only receive FIFO 0)
+ *----------------------------------------------------------------------------*/
+void CAN_ReadMsg0 (CAN_msg *msg)  {
 
-	int fifo0, fifo1, i;
+  //TODO: Read FIFO 0 Status, see how many messages it has, then read them out 
+  
+                                                  // Read identifier information
+  msg->id = (uint32_t)0x000007FF & (CAN->sFIFOMailBox[0].RIR >> 21);
+     
+                                                  // Read length (number of received bytes)
+  msg->len = (unsigned char)0x0000000F & CAN->sFIFOMailBox[0].RDTR;
+  
+                                                  // Read data bytes
+  msg->data[0] = (unsigned int)0x000000FF & (CAN->sFIFOMailBox[0].RDLR);
+  msg->data[1] = (unsigned int)0x000000FF & (CAN->sFIFOMailBox[0].RDLR >> 8);
+  msg->data[2] = (unsigned int)0x000000FF & (CAN->sFIFOMailBox[0].RDLR >> 16);
+  msg->data[3] = (unsigned int)0x000000FF & (CAN->sFIFOMailBox[0].RDLR >> 24);
 
-	CAN_TypeDef * can1 = CAN1_BASE;
+  msg->data[4] = (unsigned int)0x000000FF & (CAN->sFIFOMailBox[0].RDHR);
+  msg->data[5] = (unsigned int)0x000000FF & (CAN->sFIFOMailBox[0].RDHR >> 8);
+  msg->data[6] = (unsigned int)0x000000FF & (CAN->sFIFOMailBox[0].RDHR >> 16);
+  msg->data[7] = (unsigned int)0x000000FF & (CAN->sFIFOMailBox[0].RDHR >> 24);
 
-	fifo0 = can1->RF0R & CAN_RF0R_FMP0_Msk;
-	fifo1 = can1->RF1R & CAN_RF1R_FMP0_Msk;
-	
-	if( (fifo0 + fifo1) == 0){
-		return true; //No messages to receive, do nothing
-	}
-	//otherwise allocate a buffer to hold all messages
-	//NOTE: will be calling function's responsibility to free memory
-	rec_buf = rec_buf = malloc( (fifo0+fifo0) * sizeof(CAN_MESSAGE) ); 
-	if(rec_buf == NULL){ //Error in allocation
-		return false;
-	}
-
-	if( fifo0 > 0){ //There is at least 1 message in FIFO0
-			
-			for( i = 0; i < fifo0; i++){
-				rec_buf[i].id = can1->sFIFOMailBox[0].RIR;	
-				rec_buf[i].dlc_time_stamp = can1->sFIFOMailBox[0].RTDR;
-				rec_buf[i].data_low = can1->sFIFOMailBox[0].RDLR;
-				rec_buf[i].data_high = can1->sFIFOMailBox[0].RDHR;
-			}
-	}
-	if( fifo1 > 0){ //There is at least 1 message in FIFO1
-		
-			for( i = fifo0; i < (fifo1+fifo0); i++){
-				rec_buf[i].id = can1->sFIFOMailBox[1].RIR;	
-				rec_buf[i].dlc_time_stamp = can1->sFIFOMailBox[1].RTDR;
-				rec_buf[i].data_low = can1->sFIFOMailBox[1].RDLR;
-				rec_buf[i].data_high = can1->sFIFOMailBox[1].RDHR;
-			}
-	}
-	
-	//TODO Check Error Cases
-
-    if (debuggingOn) CAN_message_dump(&receiving, false);
-    
-    return true;
+  CAN->RF0R |= CAN_RF0R_RFOM0;                    // Release FIFO 0 output mailbox
 }
 
-
-//Function for receiving one entire FIFO, based on the value of fifo_select. (0 or 1) 
-// The entire FIFO needs to read out because FIFO is set to empty once a message
-// is acknowledged, no matter how many messages are stored.
-bool CAN_receive_FIFO( int fifo_select, uint32_t *rec_buf) {
-
-	int fifo0, fifo1, i;
-
-	CAN_TypeDef * can1 = CAN1_BASE;
-
-	fifo0 = (can1->RF0R & CAN_RF0R_FMP0_Msk) & (fifo_select == 0);
-	fifo1 = can1->RF1R & CAN_RF1R_FMP0_Msk & (fifo_select == 1);
-
-	if( fifo0 ){ //There is at least 1 message in FIFO0 and it got selected
-			//NOTE: will be calling function's responsibility to free memory
-			rec_buf = malloc(fifo0 * sizeof(CAN_MESSAGE) );
-			for( i = 0; i < fifo0; i++){
-				rec_buf[i].id = can1->sFIFOMailBox[0].RIR;	
-				rec_buf[i].dlc_time_stamp = can1->sFIFOMailBox[0].RTDR;
-				rec_buf[i].data_low = can1->sFIFOMailBox[0].RDLR;
-				rec_buf[i].data_high = can1->sFIFOMailBox[0].RDHR;
-			}
-	}
-	else if( fifo1 ){ //There is at least 1 message in FIFO1 and it got selected
-		
-			//NOTE: will be calling function's responsibility to free memory
-			rec_buf = malloc(fifo1 * sizeof(CAN_MESSAGE) );
-			for( i = 0; i < fifo1; i++){
-				rec_buf[i].id = can1->sFIFOMailBox[1].RIR;	
-				rec_buf[i].dlc_time_stamp = can1->sFIFOMailBox[1].RTDR;
-				rec_buf[i].data_low = can1->sFIFOMailBox[1].RDLR;
-				rec_buf[i].data_high = can1->sFIFOMailBox[1].RDHR;
-			}
-	}
-	else{ //No messages to receive, do nothing
-		return true;
-	}
-	
-	//TODO Check Error Cases
-
-    if (debuggingOn) CAN_message_dump(&receiving, false);
-    
-    return true;
-}
 /******************************************************************************/
 /******************************************************************************/
 
 
-/******************************************************************************/
-/*                          Heartbeat Related                                 */
-/******************************************************************************/
-//TODO: what does this do?
-void CAN_send_fault(void) {
-    
-}
-
-//TODO: Send heartbeat message, figure out what needs to be sent
-void CAN_send_heartbeat(void) {
-   	
-	int numBytes;
-	uint32_t data_buf[ TODO ];
-
-	numBytes = //TODO;
-	data_buf = //TODO;
-
-	CAN_send( numBytes, &data_buf);
-
-}
 /******************************************************************************/
 /******************************************************************************/
 
@@ -410,13 +318,50 @@ void CAN_send_heartbeat(void) {
 /*                                    ISRs                                    */
 /******************************************************************************/
 
-//TODO: create ISR's for CAN interrupts
-void __ISR (MAIN_CAN_VECTOR, IPL1SOFT) MAIN_CAN_Interrupt(void) {
-    
+/*----------------------------------------------------------------------------
+  CAN transmit interrupt handler
+ *----------------------------------------------------------------------------*/
+void CAN1_TX_IRQHandler(void) {
+
+  CAN_TypeDef *can1 = CAN1_BASE;
+
+  if (can1->TSR & CAN_TSR_RQCP0) {                 // request completed mbx 0
+    can1->TSR |= CAN_TSR_RQCP0;                    // reset request complete mbx 0
+    can1->IER &= ~CAN_IER_TMEIE;                   // disable TME interrupt
+	
+	CAN_TxReady = 1; 
+  }
 }
 
-void __ISR (ALT_CAN_VECTOR, IPL1SOFT) ALT_CAN_Interrupt (void) {
-    
+/*----------------------------------------------------------------------------
+  CAN receive interrupt handlers
+ *----------------------------------------------------------------------------*/
+void CAN1_RX0_IRQHandler (void) {
+
+  CAN_TypeDef *can1 = CAN1_BASE;
+
+  if (can1->RF0R & CAN_RF0R_FMP0) {			      // message pending ?
+	CAN_ReadMsg(&CAN_RxMsg0);                       // read the message
+
+    CAN_RxReceived = 1;                                // set receive flag
+  }
+}
+
+void CAN1_RX1_IRQHandler(void) {
+
+  CAN_TypeDef *can1 = CAN1_BASE;
+
+  if (can1->RF1R & CAN_RF1R_FMP2) {			      // message pending ?
+	CAN_ReadMsg1(&CAN_RxMsg1);                       // read the message
+
+    CAN_RxReceived = 1;                                // set receive flag
+  }
+}
+
+//TODO: Check CAN_ESR reg for error status
+void CAN1_SCE_IRQHandler( void ){
+
+
 }
 /******************************************************************************/
 /******************************************************************************/
