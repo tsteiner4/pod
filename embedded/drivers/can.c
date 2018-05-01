@@ -4,9 +4,9 @@
 /*                                Global Variables                             */
 /******************************************************************************/
 uint8_t CAN_TxReady = 0;
-uint8_t CAN_RxReceived = 0;
+uint8_t CAN_RxReceived0, CAN_RxReceived1 = 0;
 
-CAN_MESSAGE CAN_RxMsg0, CAN_RxMsg1;
+//CAN_MESSAGE CAN_RxMsg0, CAN_RxMsg1;
 
 /******************************************************************************/
 /******************************************************************************/
@@ -104,95 +104,82 @@ void CAN_interruptInit(void){
 
 */
 
+/*----------------------------------------------------------------------------
+  check if transmit mailbox is empty
+ *----------------------------------------------------------------------------*/
+void CAN_waitReady (void)  {
+
+  while ((CAN->TSR & CAN_TSR_TME0) == 0);         // Transmit mailbox 0 is empty
+  CAN_TxReady = 1;
+
+}
+
+
 //Initializing send and receive mailboxes/FIFOs
 void CAN_mailboxInit(void) {
 
-	CAN_TypeDef *mycan = CAN1_BASE;
+	CAN_TypeDef *can1 = CAN1_BASE;
 
-	//pointer (array) of type TxMailBox, of size 3. Represents tx mailboxes
-	CAN_TxMailBox_TypeDef *tx_mailbox = mycan->sTxMailBox; 
-
-	//array of type FIFOMailBox, of size 2. Represents 2 receive fifos
-	CAN_FIFOMailBox_TypeDef *rx_fifo = mycan->sFIFOMailBox;
-
-
-////////////////////Transfer Mailboxes (3) CAN_TIxR {x = 0,1,2}//////////////////////////////////////////////////
-//BITS 31-21 are Standard ID bits
-//Bit 2 is the standard id/ext  (0)
-//Bit 1 is remote frame/data frame (0)
-//Bit 0 is the transmit request set by software, cleared by hardware when sent
-
-//Data Registers: 
-	//High Byte: CAN_TDHxR {x = 0,1,2}
-	//Low Byte: CAN_TDLxR {x = 0,1,2}
-
-
-///////////////////Receive Mailboxes (2) CAN_RIxR {x = 0,1}/////////////////////////
-//Bits 31-21 are standard id
-//Bit 2 is standard id/ext id (0)
-//Bit 1 is remote frame/data frame (0)
-//Bit 0 reserved
-
-//Data Registers: 
-	//High Byte: CAN_RDHxR {x = 0,1}
-	//Low Byte: CAN_RDLxR {x = 0,1}
-
-	//Set all FIFOs/Mailboxes to use standard identifier, not extended
-	tx_mailbox[0].TIR &= ~CAN_TI0R_IDE_Msk;
-	tx_mailbox[1].TIR &= ~CAN_TI1R_IDE_Msk;
-	tx_mailbox[2].TIR &= ~CAN_TI2R_IDE_Msk;
+	//Set all FIFOs/Mailboxes to use standard identifier, NOT extended
+	can1->sTxMailBox[0].TIR &= ~CAN_TI0R_IDE;
+	//can1->sTxMailBox[1].TIR &= ~CAN_TI1R_IDE;
+	//can1->sTxMailBox[2].TIR &= ~CAN_TI2R_IDE;
 	
-	rx_fifo[0].RIR &= ~CAN_RI0R_IDE_Msk;
-	rx_fifo[1].RIR &= ~CAN_RI1R_IDE_Msk;
+	can1->sFIFOMailBox[0].RIR &= ~CAN_RI0R_IDE;
+	can1->sFIFOMailBox[1].RIR &= ~CAN_RI1R_IDE;
 
-	//Set to data frames //TODO: Check if we want remote frames or data frames
-	tx_mailbox[0].TIR &= ~CAN_TI0R_RTR_Msk;	
-	tx_mailbox[0].TIR &= ~CAN_TI1R_RTR_Msk;	
-	tx_mailbox[0].TIR &= ~CAN_TI2R_RTR_Msk;
+	//Sets both tx and rx to usingdata frames
+	can1->sTxMailBox[0].TIR &= ~CAN_TI0R_RTR;
+	//can1->sTxMailBox[1].TIR &= ~CAN_TI1R_RTR;
+	//can1->sTxMailBox[2].TIR &= ~CAN_TI2R_RTR;
 
-	rx_fifo[0] &= ~CAN_RI0R_RTR_Msk;
-	rx_fifo[1] &= ~CAN_RI1R_RTR_Msk;
+	can1->sFIFOMailBox[0].RIR &= ~CAN_RI0R_RTR;
+	can1->sFIFOMailBox[1].RIR &= ~CAN_RI1R_RTR;
 
 	
 }
 
-//Set up CAN_BTR register, called from CAN_init()
+//TODO: Figure out how to set up CAN_BTR register, called from CAN_init()
 void CAN_setBitTiming(void) {
 
 
+}
+
+//Sets CAN1 to Initialization Mode
+void CAN_setInitMode(void) {
+  
+ 	can1->MCR |= CAN_MCR_INRQ_Msk; 
+
+	while( can1->MSR & CAN_MSR_INAK == 0  ) {} //Waits until Hardware signals we are in
+								                                  //Initialization mode                                                  
+  return;
 }
 
 void CAN_init(void) {
 	
 	CAN_TypeDef *can1 = CAN1_BASE; //CAN1 Base
 
-	//TODO Actually write these values to the CAN_MCR Register correctly
 	can1->MCR |= 1<<15; //Master Software Reset
     
-	can1->MCR |= CAN_MCR_INRQ_Msk; //Set CAN to Initialization Mode
+  CAN_setInitMode();
 
-	while( can1->MSR & CAN_MSR_INAK_Msk == 0  ) {} //Waits until Hardware signals we are in
-								//Initialization mode
 
-	//CAN_filterInit();	
-    CAN_setBitTiming();
-    CAN_mailboxInit;
-    CAN_interruptInit();
-	
-	can1->MCR &= (~0x1); //Sets CAFIFOMailBox to Normal Mode
-	
-	CAN_start();
+	//TODO: Finish rest of configuration:
  
-	//Finish rest of configuration:
+   // Specifically set up the clock
 	//
-	//From pg. 1355 of ref. manual
+  //From pg. 1355 of ref. manual
 	//
 	//"To initialize the CAN Controller, software has to set up the Bit Timing (CAN_BTR) and CAN
 	//options (CAN_MCR) registers.
-	//To initialize the registers associated with the CAN filter banks (mode, scale, FIFO
-	//assignment, activation and filter values), software has to set the FINIT bit (CAN_FMR). Filter
-	//initialization also can be done outside the initialization mode. "
 
+	  //CAN_filterInit();	
+    CAN_setBitTiming();
+   //CAN_mailboxInit;
+   //CAN_interruptInit();
+	
+	CAN_start();
+ 
 }
 
 /*----------------------------------------------------------------------------
@@ -243,9 +230,13 @@ transmit mailbox with the lowest priority
 /*----------------------------------------------------------------------------
   wite a message to CAN peripheral and transmit it (only uses mailbox 0) 
  *----------------------------------------------------------------------------*/
-void CAN_WriteMsg (CAN_msg *msg)  {
+void CAN_WriteMsg (CAN_MESSAGE *msg)  {
 
   //Check if TX is ready before sending a message
+  if( !CAN_TxReady ){
+    CAN_waitReady();
+  }
+  CAN_TxReady = 0; //Reset ready variable
 
   CAN_TypeDef *can1 = CAN1_BASE; //CAN1 Base
                                                   // Setup identifier information
@@ -282,9 +273,10 @@ void CAN_WriteMsg (CAN_msg *msg)  {
 /*----------------------------------------------------------------------------
   read a message from CAN peripheral and release it (uses only receive FIFO 0)
  *----------------------------------------------------------------------------*/
-void CAN_ReadMsg0 (CAN_msg *msg)  {
+void CAN_ReadMsg0 (CAN_MESSAGE *msg)  {
 
   //TODO: Read FIFO 0 Status, see how many messages it has, then read them out 
+  CAN_TypeDef *can1 = CAN1_BASE; //CAN1 Base
   
                                                   // Read identifier information
   msg->id = (uint32_t)0x000007FF & (CAN->sFIFOMailBox[0].RIR >> 21);
@@ -293,17 +285,41 @@ void CAN_ReadMsg0 (CAN_msg *msg)  {
   msg->len = (unsigned char)0x0000000F & CAN->sFIFOMailBox[0].RDTR;
   
                                                   // Read data bytes
-  msg->data[0] = (unsigned int)0x000000FF & (CAN->sFIFOMailBox[0].RDLR);
-  msg->data[1] = (unsigned int)0x000000FF & (CAN->sFIFOMailBox[0].RDLR >> 8);
-  msg->data[2] = (unsigned int)0x000000FF & (CAN->sFIFOMailBox[0].RDLR >> 16);
-  msg->data[3] = (unsigned int)0x000000FF & (CAN->sFIFOMailBox[0].RDLR >> 24);
+  msg->data[0] = (unsigned int)0x000000FF & (can1->sFIFOMailBox[0].RDLR);
+  msg->data[1] = (unsigned int)0x000000FF & (can1->sFIFOMailBox[0].RDLR >> 8);
+  msg->data[2] = (unsigned int)0x000000FF & (can1->sFIFOMailBox[0].RDLR >> 16);
+  msg->data[3] = (unsigned int)0x000000FF & (can1->sFIFOMailBox[0].RDLR >> 24);
 
-  msg->data[4] = (unsigned int)0x000000FF & (CAN->sFIFOMailBox[0].RDHR);
-  msg->data[5] = (unsigned int)0x000000FF & (CAN->sFIFOMailBox[0].RDHR >> 8);
-  msg->data[6] = (unsigned int)0x000000FF & (CAN->sFIFOMailBox[0].RDHR >> 16);
-  msg->data[7] = (unsigned int)0x000000FF & (CAN->sFIFOMailBox[0].RDHR >> 24);
+  msg->data[4] = (unsigned int)0x000000FF & (can1->sFIFOMailBox[0].RDHR);
+  msg->data[5] = (unsigned int)0x000000FF & (can1->sFIFOMailBox[0].RDHR >> 8);
+  msg->data[6] = (unsigned int)0x000000FF & (can1->sFIFOMailBox[0].RDHR >> 16);
+  msg->data[7] = (unsigned int)0x000000FF & (can1->sFIFOMailBox[0].RDHR >> 24);
 
   CAN->RF0R |= CAN_RF0R_RFOM0;                    // Release FIFO 0 output mailbox
+}
+
+void CAN_ReadMsg1 (CAN_MESSAGE *msg)  {
+
+  //TODO: Read FIFO 1 Status, see how many messages it has, then read them out 
+  CAN_TypeDef *can1 = CAN1_BASE; //CAN1 Base
+                                                  // Read identifier information
+  msg->id = (uint32_t)0x000007FF & (CAN->sFIFOMailBox[1].RIR >> 21);
+     
+                                                  // Read length (number of received bytes)
+  msg->len = (unsigned char)0x0000000F & CAN->sFIFOMailBox[1].RDTR;
+  
+                                                  // Read data bytes
+  msg->data[0] = (unsigned int)0x000000FF & (can1->sFIFOMailBox[1].RDLR);
+  msg->data[1] = (unsigned int)0x000000FF & (can1->sFIFOMailBox[1].RDLR >> 8);
+  msg->data[2] = (unsigned int)0x000000FF & (can1->sFIFOMailBox[1].RDLR >> 16);
+  msg->data[3] = (unsigned int)0x000000FF & (can1->sFIFOMailBox[1].RDLR >> 24);
+
+  msg->data[4] = (unsigned int)0x000000FF & (can1->sFIFOMailBox[1].RDHR);
+  msg->data[5] = (unsigned int)0x000000FF & (can1->sFIFOMailBox[1].RDHR >> 8);
+  msg->data[6] = (unsigned int)0x000000FF & (can1->sFIFOMailBox[1].RDHR >> 16);
+  msg->data[7] = (unsigned int)0x000000FF & (can1->sFIFOMailBox[1].RDHR >> 24);
+
+  CAN->RF1R |= CAN_RF1R_RFOM1;                    // Release FIFO 0 output mailbox
 }
 
 /******************************************************************************/
@@ -343,7 +359,7 @@ void CAN1_RX0_IRQHandler (void) {
   if (can1->RF0R & CAN_RF0R_FMP0) {			      // message pending ?
 	CAN_ReadMsg(&CAN_RxMsg0);                       // read the message
 
-    CAN_RxReceived = 1;                                // set receive flag
+  //CAN_RxReceived0 = 1;                                // set receive flag
   }
 }
 
@@ -351,10 +367,10 @@ void CAN1_RX1_IRQHandler(void) {
 
   CAN_TypeDef *can1 = CAN1_BASE;
 
-  if (can1->RF1R & CAN_RF1R_FMP2) {			      // message pending ?
+  if (can1->RF1R & CAN_RF1R_FMP1) {			      // message pending ?
 	CAN_ReadMsg1(&CAN_RxMsg1);                       // read the message
 
-    CAN_RxReceived = 1;                                // set receive flag
+  //CAN_RxReceived1 = 1;                                // set receive flag
   }
 }
 
@@ -372,6 +388,7 @@ void CAN1_SCE_IRQHandler( void ){
 /******************************************************************************/
 
 //TODO: Redo debugging functions
+/*
 void CAN_print_errors(void) {
 
 }
@@ -383,6 +400,8 @@ void CAN_message_dump(CAN_MESSAGE *message, bool outgoing) {
 bool CAN_ping(uint16_t SID, bool initiator) {
 
 }
+*/
+
 /******************************************************************************/
 /******************************************************************************/
 

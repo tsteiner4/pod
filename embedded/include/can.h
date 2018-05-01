@@ -11,40 +11,7 @@
  */
 
 /******************************************************************************/
-/*                     Internal CAN Mode Definitions                          */
 /******************************************************************************/
-#define DEBUG_MODE				6
-#define LOOPBACK_SILENT_MODE	5
-#define SILENT_MODE		    	4
-#define LOOPBACK_MODE       	3
-#define SLEEP_MODE				2
-#define NORMAL_MODE         	1
-#define INIT_MODE				0
-/******************************************************************************/
-/******************************************************************************/
-
-
-/******************************************************************************/
-/*                     Transmit FIFO States                                    */
-/******************************************************************************/
-
-//From Page 1359 of the Reference Manual:
-
-	//"In order to transmit a message, the application must select one empty 
-	//transmit mailbox, setup the identifier, the data length code (DLC) and 
-	//the data before requesting the transmission by setting the corresponding 
-	//TXRQ bit in the CAN_TIxR register. Once the mailbox has left empty state,
-	//the software no longer has write access to the mailbox registers. 
-	//Immediately after the TXRQ bit has been set, the mailbox enters pending 
-	//state and waits to become the highest priority mailbox"
-
-
-#define EMPTY				0
-#define PENDING				1
-/******************************************************************************/
-/******************************************************************************/
-
-
 
 /******************************************************************************/
 /*                     Receive FIFO States                                    */
@@ -60,7 +27,7 @@
 
 //There are 2 Receive-related interrupts on pg. 1362 of the Ref. Manual
 
-#define EMPTY				0
+#define EMPTY			 0
 #define PENDING_1			1
 #define PENDING_2			2
 #define PENDING_3			3
@@ -78,13 +45,25 @@ typedef struct  {
   unsigned char  len;                // Length of data field in bytes
 } CAN_MESSAGE;
 
+
 /******************************************************************************/
 /*                                 Functions                                  */
 /******************************************************************************/
+void CAN_init(void);
+void CAN_setInitMode(void);
+void CAN_setBitTiming(void);
+void CAN_mailboxInit(void);
+void CAN_MCRInit(void);
+void CAN_filterInit(void);
+//void CAN_interruptInit(void);
+void CAN_waitReady(void);
+void CAN_start(void);
 
+void CAN_WriteMsg(CAN_MESSAGE *msg);
+void CAN_ReadMsg0(CAN_MESSAGE *msg);
+void CAN_ReadMsg1(CAN_MESSAGE *msg);
 
-
-
+void disable_CAN_interrupts(void);
 
 /******************************************************************************/
 /******************************************************************************/
